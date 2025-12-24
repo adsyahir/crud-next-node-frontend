@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: crud-frontend
     container_name: crud-frontend
     restart: unless-stopped
     env_file:
