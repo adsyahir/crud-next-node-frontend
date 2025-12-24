@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -21,39 +21,73 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { axiosInstance } from '@/lib/axios';
+import { formatDate } from '@/lib/utils';
 
 interface Item {
-  id: number;
+  _id: string;
   name: string;
   description: string;
   createdAt: string;
+  updatedAt?: string;
 }
-
+const api = axiosInstance;
 export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
+  const [items, setItems] = useState<Item[]>([]);
+  const getAllItems = async () : Promise<Item[]> => {
+    try{
+      const response = await api.get('/api/items')      
+      return response.data;
+    }catch(e){
+      console.error(e)
+      return [];
+    }
+  }
+  const add = async (item: Item) => {
+    console.log(item);
+    try {
+      await api.post('/api/items', item);
+      setIsModalOpen(false);
+      getAllItems().then(items => {
+        setItems(items);
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
-  // Dummy data for UI display
-  const [items] = useState<Item[]>([
-    {
-      id: 1,
-      name: 'Sample Item 1',
-      description: 'This is a sample description for item 1',
-      createdAt: '2024-12-20',
-    },
-    {
-      id: 2,
-      name: 'Sample Item 2',
-      description: 'This is a sample description for item 2',
-      createdAt: '2024-12-21',
-    },
-    {
-      id: 3,
-      name: 'Sample Item 3',
-      description: 'This is a sample description for item 3',
-      createdAt: '2024-12-22',
-    },
-  ]);
+  const remove = async (id: string): Promise<void> => {
+    try {
+      await api.delete(`/api/items/${id}`);
+
+      getAllItems().then(items => {
+        setItems(items);
+      });
+  
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const update = async (item: Item): Promise<void> => {
+    try {
+      await api.put(`/api/items/${item._id}`, item);
+      setIsModalOpen(false);
+      getAllItems().then(items => {
+        setItems(items);
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    getAllItems().then(items => {
+      setItems(items);
+    });
+  })
 
   return (
     <div className="min-h-screen bg-background">
@@ -76,7 +110,7 @@ export default function Home() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>ID</TableHead>
+                <TableHead>No</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead>Created At</TableHead>
@@ -91,12 +125,12 @@ export default function Home() {
                   </TableCell>
                 </TableRow>
               ) : (
-                items.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-medium">{item.id}</TableCell>
+                items.map((item, index) => (
+                  <TableRow key={item._id}>
+                    <TableCell className="font-medium">{index + 1}</TableCell>
                     <TableCell>{item.name}</TableCell>
                     <TableCell>{item.description}</TableCell>
-                    <TableCell>{item.createdAt}</TableCell>
+                    <TableCell>{formatDate(item.createdAt)}</TableCell>
                     <TableCell className="text-right space-x-2">
                       <Button
                         variant="outline"
@@ -112,7 +146,7 @@ export default function Home() {
                         variant="destructive"
                         size="sm"
                         onClick={() => {
-                          // Add your delete logic here
+                          remove(item._id);
                         }}
                       >
                         Delete
@@ -143,8 +177,19 @@ export default function Home() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              // Add your create/update logic here
-              setIsModalOpen(false);
+              const formData = new FormData(e.currentTarget);
+              const itemData = {
+                _id: editingItem?._id || '',
+                name: formData.get('name') as string,
+                description: formData.get('description') as string,
+                createdAt: editingItem?.createdAt || new Date().toISOString(),
+              };
+
+              if (editingItem) {
+                update(itemData as Item);
+              } else {
+                add(itemData as Item);
+              }
             }}
           >
             <div className="grid gap-4 py-4">
