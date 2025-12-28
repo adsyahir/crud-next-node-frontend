@@ -94,7 +94,7 @@ export default function Home() {
       <div className="container mx-auto py-8">
         {/* Header */}
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Items Management huhu</h1>
+          <h1 className="text-3xl font-bold">Items Management hehe</h1>
           <Button
             onClick={() => {
               setEditingItem(null);
