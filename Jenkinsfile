@@ -55,7 +55,7 @@ pipeline{
                     ).trim()
                     
                     sh """
-                        echo "📦 Creating release: ${env.RELEASE_VERSION}"
+                        echo "Creating release: ${env.RELEASE_VERSION}"
                         
                         # Create releases directory
                         mkdir -p ${RELEASES_DIR}
@@ -80,7 +80,7 @@ pipeline{
         stage('Deploy') {
             steps{
                 sh """
-                    echo "🚀 Deploying release: ${env.RELEASE_VERSION}"
+                    echo "Deploying release: ${env.RELEASE_VERSION}"
                     
                     # Create backup of current
                     if [ -L ${DEPLOY_DIR}/current ]; then
@@ -100,7 +100,7 @@ pipeline{
         stage('Smoke Test') {
             steps{
                 script{
-                    echo '🔍 Running smoke tests...'
+                    echo 'Running smoke tests...'
                     sleep(time: 5, unit: 'SECONDS')
                     
                     def response = sh(
@@ -112,7 +112,7 @@ pipeline{
                         error "Smoke test failed! Response: ${response}"
                     }
                     
-                    echo "✅ Smoke test passed! Response: ${response}"
+                    echo "Smoke test passed! Response: ${response}"
                 }
             }
         }
@@ -130,14 +130,14 @@ pipeline{
 
     post {
         success {
-            echo "✅ Deployment successful!"
+            echo "Deployment successful!"
             echo "Version: ${env.RELEASE_VERSION}"
             echo "Application: ${APP_URL}"
         }
         
         failure {
             script {
-                echo "❌ Deployment failed! Rolling back..."
+                echo "Deployment failed! Rolling back..."
                 
                 // Automatic rollback
                 sh """
@@ -148,7 +148,7 @@ pipeline{
                         echo "Rolling back to: \$PREVIOUS"
                         ln -sfn ${RELEASES_DIR}/\$PREVIOUS ${DEPLOY_DIR}/current
                         sudo systemctl restart ${SERVICE_NAME}
-                        echo "✅ Rollback completed"
+                        echo "Rollback completed"
                     fi
                 """
             }
