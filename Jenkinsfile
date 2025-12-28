@@ -48,7 +48,7 @@ pipeline{
                     rsync -av ${WORKSPACE}/node_modules ${DEPLOY_DIR}/
                     
                     # Restart service
-                    sudo systemctl restart ${SERVICE_NAME}
+                    sudo systemctl reload ${SERVICE_NAME} || sudo systemctl restart ${SERVICE_NAME}
                 '''
             }
         }
