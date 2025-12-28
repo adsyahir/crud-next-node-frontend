@@ -1,6 +1,10 @@
 pipeline{
     agent any
 
+    options {
+        disableConcurrentBuilds()  // Wait for previous build
+    }
+
     environment {
         DEPLOY_DIR = '/var/www/crud-node-next/crud-next-node-frontend'
         SERVICE_NAME = 'crud-frontend'
