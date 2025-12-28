@@ -6,49 +6,94 @@ pipeline{
     }
 
     environment {
+        APP_NAME = 'crud-frontend'
+        WORKSPACE_BUILD = '/var/lib/jenkins/workspace/crud-next-node-frontend'
         DEPLOY_DIR = '/var/www/crud-node-next/crud-next-node-frontend'
+        RELEASES_DIR = '/var/www/crud-node-next/releases/frontend'
         SERVICE_NAME = 'crud-frontend'
         APP_URL = 'http://103.191.76.205:3001'
-        HEALTH_ENDPOINT = '/'
     }
 
     stages{
         stage('Checkout') {
             steps{
-                sh '''
-                    echo "📥 Checking out latest code from SCM..."
-                    cd ${DEPLOY_DIR}
-                    git pull origin main
-                '''
+                // Build in workspace, NOT production
+                checkout scmGit(
+                    branches: [[name: '*/main']], 
+                    userRemoteConfigs: [[
+                        credentialsId: 'github-token', 
+                        url: 'https://github.com/adsyahir/crud-next-node-frontend.git'
+                    ]]
+                )
             }
         }
 
         stage('Dependencies') {
             steps{
-                sh '''
-                    echo "📦 Installing dependencies..."
-                    cd ${DEPLOY_DIR}
-                    npm install
-                '''
+                sh 'npm ci'  // ci is faster and deterministic
             }
         }
 
         stage('Build') {
             steps{
-                sh '''
-                    echo "🔨 Building application..."
-                    cd ${DEPLOY_DIR}
-                    npm run build
-                '''
+                sh 'npm run build'
+            }
+        }
+
+        stage('Test') {
+            steps{
+                sh 'npm test || echo "No tests configured"'
+            }
+        }
+
+        stage('Package') {
+            steps{
+                script {
+                    env.RELEASE_VERSION = sh(
+                        script: "date +%Y%m%d_%H%M%S",
+                        returnStdout: true
+                    ).trim()
+                    
+                    sh """
+                        echo "📦 Creating release: ${env.RELEASE_VERSION}"
+                        
+                        # Create releases directory
+                        mkdir -p ${RELEASES_DIR}
+                        
+                        # Package the build
+                        mkdir -p ${RELEASES_DIR}/${env.RELEASE_VERSION}
+                        
+                        # Copy built files
+                        cp -r .next ${RELEASES_DIR}/${env.RELEASE_VERSION}/
+                        cp -r public ${RELEASES_DIR}/${env.RELEASE_VERSION}/ || true
+                        cp -r node_modules ${RELEASES_DIR}/${env.RELEASE_VERSION}/
+                        cp package.json ${RELEASES_DIR}/${env.RELEASE_VERSION}/
+                        cp next.config.* ${RELEASES_DIR}/${env.RELEASE_VERSION}/ || true
+                        
+                        # Copy .env
+                        cp ${DEPLOY_DIR}/.env ${RELEASES_DIR}/${env.RELEASE_VERSION}/ || true
+                    """
+                }
             }
         }
 
         stage('Deploy') {
             steps{
-                sh '''
-                    echo "🚀 Deploying application..."
+                sh """
+                    echo "🚀 Deploying release: ${env.RELEASE_VERSION}"
+                    
+                    # Create backup of current
+                    if [ -L ${DEPLOY_DIR}/current ]; then
+                        CURRENT=\$(readlink ${DEPLOY_DIR}/current)
+                        echo "Current version: \$CURRENT"
+                    fi
+                    
+                    # Point to new release
+                    ln -sfn ${RELEASES_DIR}/${env.RELEASE_VERSION} ${DEPLOY_DIR}/current
+                    
+                    # Restart service
                     sudo systemctl restart ${SERVICE_NAME}
-                '''
+                """
             }
         }
 
@@ -58,85 +103,55 @@ pipeline{
                     echo '🔍 Running smoke tests...'
                     sleep(time: 5, unit: 'SECONDS')
                     
-                    def maxRetries = 5
-                    def retryCount = 0
-                    def healthCheckPassed = false
+                    def response = sh(
+                        script: "curl -s -o /dev/null -w '%{http_code}' ${APP_URL}",
+                        returnStdout: true
+                    ).trim()
                     
-                    while (retryCount < maxRetries && !healthCheckPassed) {
-                        try {
-                            sh """
-                                response=\$(curl -s -o /dev/null -w "%{http_code}" ${APP_URL}${HEALTH_ENDPOINT})
-                                echo "Smoke test response: \$response"
-                                
-                                if [ "\$response" -eq "200" ] || [ "\$response" -eq "304" ]; then
-                                    echo "✅ Smoke test passed!"
-                                    exit 0
-                                else
-                                    echo "❌ Smoke test failed with status \$response"
-                                    exit 1
-                                fi
-                            """
-                            healthCheckPassed = true
-                        } catch (Exception e) {
-                            retryCount++
-                            if (retryCount < maxRetries) {
-                                echo "⚠️ Smoke test attempt ${retryCount}/${maxRetries} failed, retrying in 5 seconds..."
-                                sleep(time: 5, unit: 'SECONDS')
-                            } else {
-                                error "❌ Smoke test failed after ${maxRetries} attempts"
-                            }
-                        }
+                    if (response != '200' && response != '304') {
+                        error "Smoke test failed! Response: ${response}"
                     }
+                    
+                    echo "✅ Smoke test passed! Response: ${response}"
                 }
             }
         }
 
-        stage('Verify') {
+        stage('Cleanup Old Releases') {
             steps{
-                sh '''
-                    echo "✅ Verifying deployment..."
-                    echo "=========================="
-                    
-                    echo "Service Status:"
-                    sudo systemctl status ${SERVICE_NAME} --no-pager | head -10
-                    
-                    echo "\nPort Status:"
-                    sudo lsof -i :3001 | head -5
-                    
-                    echo "\nRecent Logs:"
-                    sudo journalctl -u ${SERVICE_NAME} -n 10 --no-pager
-                    
-                    echo "\nDeployed Version:"
-                    cd ${DEPLOY_DIR}
-                    git log -1 --oneline
-                '''
+                sh """
+                    # Keep only last 5 releases
+                    cd ${RELEASES_DIR}
+                    ls -t | tail -n +6 | xargs rm -rf || true
+                """
             }
         }
     }
 
     post {
         success {
-            echo '✅ Pipeline completed successfully!'
-            echo '===================================='
-            echo "🌐 Application: ${APP_URL}"
-            echo "📦 Service: ${SERVICE_NAME}"
-            echo '===================================='
+            echo "✅ Deployment successful!"
+            echo "Version: ${env.RELEASE_VERSION}"
+            echo "Application: ${APP_URL}"
         }
+        
         failure {
-            echo '❌ Pipeline failed!'
-            sh '''
-                echo "🔍 Troubleshooting Information:"
-                echo "==============================="
+            script {
+                echo "❌ Deployment failed! Rolling back..."
                 
-                echo "\nService Logs:"
-                sudo journalctl -u ${SERVICE_NAME} -n 50 --no-pager || true
-                
-                echo "\nService Status:"
-                sudo systemctl status ${SERVICE_NAME} --no-pager || true
-            '''
-        }
-        always {
-            echo '🧹 Pipeline cleanup completed'
+                // Automatic rollback
+                sh """
+                    # Get previous release
+                    PREVIOUS=\$(ls -t ${RELEASES_DIR} | head -2 | tail -1)
+                    
+                    if [ ! -z "\$PREVIOUS" ]; then
+                        echo "Rolling back to: \$PREVIOUS"
+                        ln -sfn ${RELEASES_DIR}/\$PREVIOUS ${DEPLOY_DIR}/current
+                        sudo systemctl restart ${SERVICE_NAME}
+                        echo "✅ Rollback completed"
+                    fi
+                """
+            }
         }
     }
 }
