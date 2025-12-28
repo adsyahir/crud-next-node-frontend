@@ -1,8 +1,8 @@
 pipeline{
     agent any
-
+    
     options {
-        disableConcurrentBuilds()  // Wait for previous build
+        disableConcurrentBuilds()
     }
 
     environment {
@@ -13,55 +13,50 @@ pipeline{
     }
 
     stages{
-        stage("checkout"){
-            steps{
-                checkout scmGit(
-                    branches: [[name: '*/main']], 
-                    userRemoteConfigs: [[
-                        credentialsId: 'github-token', 
-                        url: 'https://github.com/adsyahir/crud-next-node-frontend.git'
-                    ]]
-                )
-            }
-        }
-
-        stage("install"){
-            steps{
-                sh 'npm install'
-            }
-        }
-
-        stage("build"){
-            steps{
-                sh 'npm run build'
-            }
-        }
-
-        stage("deploy"){
+        stage('Checkout') {
             steps{
                 sh '''
-                    mkdir -p ${DEPLOY_DIR}
-                    
-                    # Sync files (preserve .env)
-                    rsync -av --delete \
-                        --exclude 'node_modules' \
-                        --exclude '.git' \
-                        --exclude '.env' \
-                        ${WORKSPACE}/ ${DEPLOY_DIR}/
-                    
-                    rsync -av ${WORKSPACE}/node_modules ${DEPLOY_DIR}/
-                    
-                    # Restart service
-                    sudo systemctl reload ${SERVICE_NAME} || sudo systemctl restart ${SERVICE_NAME}
+                    echo "📥 Checking out latest code from SCM..."
+                    cd ${DEPLOY_DIR}
+                    git pull origin main
                 '''
             }
         }
 
-        stage("health check"){
+        stage('Dependencies') {
+            steps{
+                sh '''
+                    echo "📦 Installing dependencies..."
+                    cd ${DEPLOY_DIR}
+                    npm install
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps{
+                sh '''
+                    echo "🔨 Building application..."
+                    cd ${DEPLOY_DIR}
+                    npm run build
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps{
+                sh '''
+                    echo "🚀 Deploying application..."
+                    sudo systemctl restart ${SERVICE_NAME}
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
             steps{
                 script{
-                    echo '🔍 Performing health check...'
-                    sleep(time: 10, unit: 'SECONDS')
+                    echo '🔍 Running smoke tests...'
+                    sleep(time: 5, unit: 'SECONDS')
                     
                     def maxRetries = 5
                     def retryCount = 0
@@ -71,13 +66,13 @@ pipeline{
                         try {
                             sh """
                                 response=\$(curl -s -o /dev/null -w "%{http_code}" ${APP_URL}${HEALTH_ENDPOINT})
-                                echo "Health check response code: \$response"
+                                echo "Smoke test response: \$response"
                                 
                                 if [ "\$response" -eq "200" ] || [ "\$response" -eq "304" ]; then
-                                    echo "✅ Health check passed!"
+                                    echo "✅ Smoke test passed!"
                                     exit 0
                                 else
-                                    echo "❌ Health check failed with status \$response"
+                                    echo "❌ Smoke test failed with status \$response"
                                     exit 1
                                 fi
                             """
@@ -85,14 +80,36 @@ pipeline{
                         } catch (Exception e) {
                             retryCount++
                             if (retryCount < maxRetries) {
-                                echo "⚠️ Health check attempt ${retryCount} failed, retrying in 5 seconds..."
+                                echo "⚠️ Smoke test attempt ${retryCount}/${maxRetries} failed, retrying in 5 seconds..."
                                 sleep(time: 5, unit: 'SECONDS')
                             } else {
-                                error "❌ Health check failed after ${maxRetries} attempts"
+                                error "❌ Smoke test failed after ${maxRetries} attempts"
                             }
                         }
                     }
                 }
+            }
+        }
+
+        stage('Verify') {
+            steps{
+                sh '''
+                    echo "✅ Verifying deployment..."
+                    echo "=========================="
+                    
+                    echo "Service Status:"
+                    sudo systemctl status ${SERVICE_NAME} --no-pager | head -10
+                    
+                    echo "\nPort Status:"
+                    sudo lsof -i :3001 | head -5
+                    
+                    echo "\nRecent Logs:"
+                    sudo journalctl -u ${SERVICE_NAME} -n 10 --no-pager
+                    
+                    echo "\nDeployed Version:"
+                    cd ${DEPLOY_DIR}
+                    git log -1 --oneline
+                '''
             }
         }
     }
@@ -100,14 +117,26 @@ pipeline{
     post {
         success {
             echo '✅ Pipeline completed successfully!'
-            echo "🌐 Application is running at: ${APP_URL}"
+            echo '===================================='
+            echo "🌐 Application: ${APP_URL}"
+            echo "📦 Service: ${SERVICE_NAME}"
+            echo '===================================='
         }
         failure {
             echo '❌ Pipeline failed!'
             sh '''
-                echo "🔍 Checking service logs for errors..."
+                echo "🔍 Troubleshooting Information:"
+                echo "==============================="
+                
+                echo "\nService Logs:"
                 sudo journalctl -u ${SERVICE_NAME} -n 50 --no-pager || true
+                
+                echo "\nService Status:"
+                sudo systemctl status ${SERVICE_NAME} --no-pager || true
             '''
+        }
+        always {
+            echo '🧹 Pipeline cleanup completed'
         }
     }
 }
