@@ -3,14 +3,14 @@ pipeline{
 
     environment {
         DEPLOY_DIR = '/var/www/crud-node-next/crud-next-node-frontend'
-        APP_NAME = 'crud-frontend'
-        APP_URL = 'http://localhost:3000'  // Change to your app's URL and port
-        HEALTH_ENDPOINT = '/'  // Change to your health endpoint (e.g., /api/health)
+        SERVICE_NAME = 'crud-frontend'
+        APP_URL = 'http://103.191.76.205:3001'
+        HEALTH_ENDPOINT = '/'
     }
 
     parameters{
-        choice(name: "VERSION", choices: ["1.0", "2.0", "3.0"], description: "")
-        booleanParam(name: "executeTests", defaultValue: true, description: "")
+        choice(name: "VERSION", choices: ["1.0", "2.0", "3.0"], description: "Version to deploy")
+        booleanParam(name: "executeTests", defaultValue: true, description: "Execute tests")
     }
 
     stages{
@@ -44,6 +44,7 @@ pipeline{
                 sh '''
                     mkdir -p ${DEPLOY_DIR}
                     
+                    # Sync files
                     rsync -av --delete \
                         --exclude 'node_modules' \
                         --exclude '.git' \
@@ -51,15 +52,8 @@ pipeline{
                     
                     rsync -av ${WORKSPACE}/node_modules ${DEPLOY_DIR}/
                     
-                    cd ${DEPLOY_DIR}
-                    
-                    if pm2 list | grep -q "${APP_NAME}"; then
-                        pm2 reload ${APP_NAME} --update-env
-                    else
-                        pm2 start npm --name ${APP_NAME} -- start
-                    fi
-                    
-                    pm2 save
+                    # Restart service
+                    sudo systemctl restart ${SERVICE_NAME}
                 '''
             }
         }
@@ -106,17 +100,17 @@ pipeline{
             }
         }
 
-        stage("verify pm2 status"){
+        stage("verify service status"){
             steps{
                 sh '''
-                    echo "📊 PM2 Process Status:"
-                    pm2 list
+                    echo "📊 Service Status:"
+                    sudo systemctl status ${SERVICE_NAME} --no-pager
                     
-                    echo "\n📝 PM2 App Info:"
-                    pm2 info ${APP_NAME}
+                    echo "\n📝 Recent Logs:"
+                    sudo journalctl -u ${SERVICE_NAME} -n 20 --no-pager
                     
-                    echo "\n📋 Recent Logs:"
-                    pm2 logs ${APP_NAME} --lines 20 --nostream
+                    echo "\n🔌 Port Status:"
+                    sudo lsof -i :3001
                 '''
             }
         }
@@ -125,16 +119,17 @@ pipeline{
     post {
         success {
             echo '✅ Pipeline completed successfully!'
-            echo "🌐 Application is running at: ${APP_URL}"
+            echo "🌐 Application is running at: http://103.191.76.205:3001"
+            sh 'sudo systemctl status ${SERVICE_NAME} --no-pager'
         }
         failure {
             echo '❌ Pipeline failed!'
             sh '''
-                echo "🔍 Checking PM2 logs for errors..."
-                pm2 logs ${APP_NAME} --lines 50 --nostream || true
+                echo "🔍 Checking service logs for errors..."
+                sudo journalctl -u ${SERVICE_NAME} -n 50 --no-pager || true
                 
-                echo "\n📊 Current PM2 status:"
-                pm2 list || true
+                echo "\n📊 Current service status:"
+                sudo systemctl status ${SERVICE_NAME} --no-pager || true
             '''
         }
         always {
